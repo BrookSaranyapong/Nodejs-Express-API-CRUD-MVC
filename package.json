@@ -5,7 +5,8 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon src/index.js",
-    "seed:product": "node src/seeds/product.seed.js"
+    "seed:product": "node src/seeds/product.seed.js",
+    "seed:user": "node src/seeds/user.seed.js"
   },
   "keywords": [],
   "author": "",
