@@ -1,38 +1,54 @@
 const { fail } = require("../utils/response");
 const statusCode = require("../constants/statusCodes");
 
-/**
- * permissionGuard(requiredPerms: string[], options?: {
- *   mode?: 'any' | 'all',                  // any = มีสักอันก็ผ่าน, all = ต้องครบ
- *   resolver?: (userId) => Promise<{permissions?: string[], roles?: string[]}>
- * })
- */
 function permissionGuard(requiredPerms = [], { mode = "any", resolver } = {}) {
+  const need = toArray(requiredPerms);
+  if (need.length === 0) return (_req, _res, next) => next();
+
   return async (req, res, next) => {
     if (!req.user) return fail(res, "Unauthorized", statusCode.UNAUTHORIZED);
 
-    let perms = req.user.permissions;
-    if ((!perms || !perms.length) && typeof resolver === "function") {
-      try {
-        const auth = await resolver(req.user.id);
-        perms = auth?.permissions || [];
-        req.user.permissions = perms;
-        if (auth?.roles) req.user.roles = auth.roles; // เผื่อใช้กับ roleGuard
-      } catch {
-        return fail(res, "Unable to resolve permissions", statusCode.INTERNAL_ERROR);
+    try {
+      // เอาจาก req.user ก่อน
+      let perms = toArray(req.user.permissions);
+
+      // ไม่มี perms → ลองขอจาก resolver (ถ้ามี)
+      if (
+        perms.length === 0 &&
+        typeof resolver === "function" &&
+        !req.__permResolved
+      ) {
+        req.__permResolved = true; // กันเรียกซ้ำใน request เดียว
+        const resolved = await resolver(req.user.id);
+        perms = toArray(resolved?.permissions);
+        req.user.permissions = perms; // เก็บไว้ให้ตัวถัดไปใช้
+        if (resolved?.roles) req.user.roles = resolved.roles;
       }
+
+      if (perms.length === 0)
+        return fail(res, "Forbidden", statusCode.FORBIDDEN);
+
+      const ok =
+        mode === "all"
+          ? need.every((p) => perms.includes(p))
+          : need.some((p) => perms.includes(p));
+
+      if (!ok) return fail(res, "Forbidden", statusCode.FORBIDDEN);
+      return next();
+    } catch {
+      return fail(
+        res,
+        "Unable to resolve permissions",
+        statusCode.INTERNAL_ERROR
+      );
     }
-
-    if (!perms || perms.length === 0)
-      return fail(res, "Forbidden", statusCode.FORBIDDEN);
-
-    const hasAny = requiredPerms.some((p) => perms.includes(p));
-    const hasAll = requiredPerms.every((p) => perms.includes(p));
-    const ok = mode === "all" ? hasAll : hasAny;
-
-    if (!ok) return fail(res, "Forbidden", statusCode.FORBIDDEN);
-    next();
   };
+}
+
+/* helpers */
+function toArray(v) {
+  if (!v) return [];
+  return Array.isArray(v) ? v.filter(Boolean) : [v].filter(Boolean);
 }
 
 module.exports = { permissionGuard };

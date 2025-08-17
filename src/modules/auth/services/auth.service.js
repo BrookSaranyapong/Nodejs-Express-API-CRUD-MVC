@@ -6,35 +6,35 @@ const {
   verifyRefresh,
   REFRESH_TTL_DAY,
 } = require("../../../common/utils/jwt");
-const { addDays } = require("../../../common/utils/date");
-const { redis } = require("../../../redis/redis");
+const { addDays } = require("../../../common/utils/dateTime");
+const { mapUser } = require("../../../common/utils/user");
+
+const {
+  getRedis,
+  setSessionAlive,
+  touchSessionAlive,
+  dropSession,
+  revokeJti,
+} = require("../../../common/utils/redis");
 
 class AuthService {
   constructor() {
     this.repo = new AuthRepository();
   }
 
-  // สมัครสมาชิก
-  async register(data) {
-    const dup = await this.repo.findUserByEmail(data.email);
+  async register({ email, password, name }) {
+    const dup = await this.repo.findUserByEmail(email);
     if (dup) throw new Error("EMAIL_USED");
-    const password_hash = await hash(data.password);
-    const user = await this.repo.createUser({
-      email: data.email,
-      password_hash,
-      name: data.name,
-    });
-    return { id: user.id, email: user.email, name: user.name };
+    const password_hash = await hash(password);
+    const user = await this.repo.createUser({ email, password_hash, name });
+    return mapUser(user);
   }
 
-  // ล็อกอิน -> ออก token + สร้าง session
   async login({ email, password, userAgent, ip }) {
     const user = await this.repo.findUserByEmail(email);
-    if (!user || !(await verifyHash(user.password_hash, password))) {
-      throw new Error("INVALID_LOGIN");
-    }
+    const valid = user && (await verifyHash(user.password_hash, password));
+    if (!valid) throw new Error("INVALID_LOGIN");
 
-    // สร้าง session (hash ไว้ทีหลัง)
     const session = await this.repo.createSession({
       user_id: user.id,
       refresh_token_hash: "temp",
@@ -44,13 +44,11 @@ class AuthService {
       expires_at: addDays(new Date(), REFRESH_TTL_DAY),
     });
 
-    // ออก refresh + เก็บ hash
     const refreshToken = signRefreshToken({ sid: session.id, sub: user.id });
     await this.repo.updateSession(session.id, {
       refresh_token_hash: await hash(refreshToken),
     });
 
-    // ออก access
     const {
       token: accessToken,
       jti,
@@ -60,21 +58,12 @@ class AuthService {
       sub: user.id,
     });
 
-    // Redis: ทำ session alive ตามอายุ refresh
-    await redis.set(
-      `session:${session.id}`,
-      "active",
-      "EX",
-      REFRESH_TTL_DAY * 24 * 60 * 60
-    );
+    // cache session ตามอายุ refresh
+    const redis = getRedis();
+    await setSessionAlive(redis, session.id);
 
     return {
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-      },
+      user: mapUser(user),
       accessToken,
       refreshToken,
       accessExp: exp,
@@ -98,24 +87,26 @@ class AuthService {
     if (s.revoked_at || new Date(s.expires_at) <= new Date())
       throw new Error("SESSION_EXPIRED");
 
+    // กัน replay ด้วยการเทียบ hash เดิม
     const ok = await verifyHash(s.refresh_token_hash, refreshToken);
     if (!ok) {
       await this.repo.updateSession(sid, {
         revoked_at: new Date(),
         revoked_reason: "replay",
       });
-      await redis.del(`session:${sid}`);
+      const redis = getRedis();
+      await dropSession(redis, sid);
       throw new Error("REFRESH_REPLAYED");
     }
 
-    // หมุน refresh ใหม่ + อัปเดต hash
+    // ออก refresh ใหม่ + อัปเดต hash/ข้อมูลอุปกรณ์
     const newRefresh = signRefreshToken({ sid, sub: userId });
     await this.repo.updateSession(sid, {
       refresh_token_hash: await hash(newRefresh),
       last_used_at: new Date(),
       user_agent: userAgent ?? s.user_agent,
       ip: ip ?? s.ip,
-      // ถ้าต้องการ rolling window:
+      // ถ้าต้องการ rolling window ให้ขยายอายุ:
       // expires_at: addDays(new Date(), REFRESH_TTL_DAY),
     });
 
@@ -124,22 +115,19 @@ class AuthService {
       token: accessToken,
       jti,
       exp,
-    } = signAccessToken({
-      sid,
-      sub: userId,
-    });
+    } = signAccessToken({ sid, sub: userId });
 
-    // ต่ออายุคีย์ Redis ของ session
-    await redis.expire(`session:${sid}`, REFRESH_TTL_DAY * 24 * 60 * 60);
+    // ต่ออายุ cache
+    const redis = getRedis();
+    await touchSessionAlive(redis, sid);
 
     return { accessToken, refreshToken: newRefresh, accessExp: exp, jti };
   }
 
-  // revoke access token ปัจจุบัน (เดี๋ยวนี้)
+  // revoke access token ปัจจุบัน
   async revokeAccess({ jti, exp }) {
-    const now = Math.floor(Date.now() / 1000);
-    const ttl = Math.max(0, (exp || 0) - now);
-    if (ttl > 0) await redis.set(`revoked:jti:${jti}`, "1", "EX", ttl);
+    const redis = getRedis();
+    await revokeJti(redis, jti, exp);
     return { revoked: true };
   }
 
@@ -149,7 +137,8 @@ class AuthService {
       revoked_at: new Date(),
       revoked_reason: "logout",
     });
-    await redis.del(`session:${sessionId}`);
+    const redis = getRedis();
+    await dropSession(redis, sessionId);
     return { revoked: true };
   }
 
@@ -157,8 +146,10 @@ class AuthService {
   async logoutAll({ userId }) {
     await this.repo.revokeAllSessionsForUser(userId);
     const sessions = await this.repo.findAllSessionsByUser(userId);
-    const keys = sessions.map((s) => `session:${s.id}`);
-    if (keys.length) await redis.del(keys);
+
+    const redis = getRedis();
+    await Promise.all(sessions.map((s) => dropSession(redis, s.id)));
+
     return { revokedAll: true };
   }
 }

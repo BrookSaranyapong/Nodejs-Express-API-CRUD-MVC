@@ -1,18 +1,23 @@
-const jwt = require("jsonwebtoken");
-const { redis } = require("../../redis/redis");
-const { fail } = require("../utils/response");
 const statusCode = require("../constants/statusCodes");
+const { fail } = require("../utils/response");
+const { extractAccessToken, verifyAccessToken } = require("../utils/jwt");
 
-const getToken = (req) => {
-  const a = req.header("Authorization");
-  if (a && a.startsWith("Bearer ")) return a.slice(7).trim();
-  const x = req.header("X-Access-Token");
-  return x ? String(x).trim() : null;
-};
+const {
+  getRedis,
+  isJtiRevoked,
+  ensureSessionAlive,
+} = require("../utils/redis");
 
-function jwtAuthGuard(models, { optional = false } = {}) {
+function jwtAuthGuard(
+  models,
+  { optional = false, clockToleranceSec = 5 } = {}
+) {
+  // ดึง instance เดียวใช้ซ้ำใน middleware
+  const redis = getRedis();
+  const SessionModel = models._Session;
+
   return async (req, res, next) => {
-    const token = getToken(req);
+    const token = extractAccessToken(req);
     if (!token) {
       if (optional) {
         req.user = null;
@@ -21,35 +26,28 @@ function jwtAuthGuard(models, { optional = false } = {}) {
       return fail(res, "No token", statusCode.UNAUTHORIZED);
     }
 
-    let verifyToken;
+    let payload;
     try {
-      verifyToken = jwt.verify(token, process.env.ACCESS_SECRET);
+      payload = verifyAccessToken(token, process.env.ACCESS_SECRET, {
+        clockToleranceSec,
+      });
     } catch (e) {
-      return fail(
-        res,
-        e.name === "TokenExpiredError" ? "Token expired" : "Invalid token",
-        statusCode.UNAUTHORIZED
-      );
+      return fail(res, e.code || "Invalid token", statusCode.UNAUTHORIZED);
     }
 
-    const { jti, sid, sub, exp, iat } = verifyToken;
+    const { jti, sid, sub, exp, iat } = payload || {};
+    if (!jti || !sid || !sub)
+      return fail(res, "Invalid token", statusCode.UNAUTHORIZED);
 
-    if (await redis.get(`revoked:jti:${jti}`)) {
+    if (await isJtiRevoked(redis, jti)) {
       return fail(res, "Token revoked", statusCode.UNAUTHORIZED);
     }
 
-    let alive = await redis.get(`session:${sid}`);
-    if (!alive) {
-      const s = await models.Session.findByPk(sid);
-      const now = Date.now();
-      if (!s || s.revoked_at || new Date(s.expires_at).getTime() <= now) {
-        return fail(res, "Session invalid", statusCode.UNAUTHORIZED);
-      }
-      const ttl = Math.floor((new Date(s.expires_at).getTime() - now) / 1000);
-      if (ttl > 0) await redis.set(`session:${sid}`, "active", "EX", ttl);
+    if (!(await ensureSessionAlive(redis, SessionModel, sid))) {
+      return fail(res, "Session invalid", statusCode.UNAUTHORIZED);
     }
 
-    req.user = { id: sub, sessionId: sid, jti, exp, iat }; // สามารถเติม roles/permissions ภายหลังได้
+    req.user = { id: sub, sessionId: sid, jti, exp, iat };
     next();
   };
 }

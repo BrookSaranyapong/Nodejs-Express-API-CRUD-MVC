@@ -18,7 +18,11 @@ function roleGuard(requiredRoles = [], { resolver } = {}) {
         req.user.roles = roles;
         if (auth?.permissions) req.user.permissions = auth.permissions; // เผื่อใช้ต่อกับ permissionGuard
       } catch {
-        return fail(res, "Unable to resolve roles", statusCode.INTERNAL_ERROR);
+        return fail(
+          res,
+          "Unable to resolve roles",
+          statusCode.INTERNAL_SERVER_ERROR
+        );
       }
     }
 

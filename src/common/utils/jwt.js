@@ -27,6 +27,24 @@ function verifyRefresh(token) {
   return jwt.verify(token, process.env.REFRESH_SECRET);
 }
 
+function extractAccessToken(req) {
+  const auth = req.header("Authorization");
+  if (auth && auth.startsWith("Bearer ")) return auth.slice(7).trim();
+  const x = req.header("X-Access-Token");
+  return x ? String(x).trim() : null;
+}
+function verifyAccessToken(token, secret, { clockToleranceSec = 5 } = {}) {
+  try {
+    return jwt.verify(token, secret, { clockTolerance: clockToleranceSec });
+  } catch (e) {
+    const msg =
+      e.name === "TokenExpiredError" ? "Token expired" : "Invalid token";
+    const err = new Error(msg);
+    err.code = msg;
+    throw err;
+  }
+}
+
 module.exports = {
   signAccessToken,
   signRefreshToken,
@@ -34,4 +52,6 @@ module.exports = {
   verifyRefresh,
   ACCESS_TTL_MIN,
   REFRESH_TTL_DAY,
+  extractAccessToken,
+  verifyAccessToken,
 };

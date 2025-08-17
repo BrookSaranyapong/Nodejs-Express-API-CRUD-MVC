@@ -1,30 +1,27 @@
-const StatusCodes = require("../constants/statusCodes");
+const StatusCode = require("../constants/statusCodes")
 
-/**
- * Success response
- * @param {Response} res - express response object
- * @param {any} data - payload
- * @param {number} status - HTTP status code (default = 200)
- */
-function success(res, data, status = StatusCodes.OK) {
+function success(res, data, status = StatusCode.OK) {
   return res.status(status).json({
     success: true,
     statusCode: status,
     data,
+    meta: {
+      timestamp: new Date().toISOString(),
+    },
   });
 }
 
-/**
- * Fail response
- * @param {Response} res - express response object
- * @param {string} message - error message
- * @param {number} status - HTTP status code (default = 400)
- */
-function fail(res, message, status = StatusCodes.BAD_REQUEST) {
+function fail(res, message, status = StatusCode.BAD_REQUEST, extra = {}) {
   return res.status(status).json({
     success: false,
     statusCode: status,
-    error: { message },
+    error: {
+      message,
+      ...extra,
+    },
+    meta: {
+      timestamp: new Date().toISOString(),
+    },
   });
 }
 
