@@ -1,6 +1,6 @@
 const { faker } = require("@faker-js/faker");
 
-const { Product } = require("../modules/products/models/Products.model");
+const { _Product } = require("../modules/products/models/Products.model");
 const { sequelize } = require("../modules/configs/db");
 
 async function seedProducts() {
@@ -22,7 +22,7 @@ async function seedProducts() {
       });
     }
 
-    await Product.bulkCreate(products);
+    await _Product.bulkCreate(products);
     console.log("Seed data inserted successfully!");
   } catch (error) {
     console.error("Error seeding data:", error);
