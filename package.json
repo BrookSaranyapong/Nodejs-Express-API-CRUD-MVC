@@ -5,7 +5,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon src/index.js",
-    "seed": "node src/seeds/product.seed.js"
+    "seed:product": "node src/seeds/product.seed.js"
   },
   "keywords": [],
   "author": "",
@@ -14,9 +14,14 @@
   "dependencies": {
     "@faker-js/faker": "^9.9.0",
     "@sequelize/sqlite3": "^7.0.0-alpha.46",
+    "argon2": "^0.44.0",
+    "dotenv": "^17.2.1",
     "express": "^5.1.0",
+    "ioredis": "^5.7.0",
+    "jsonwebtoken": "^9.0.2",
     "sequelize": "^6.37.7",
     "sqlite3": "^5.1.7",
+    "uuid": "^11.1.0",
     "zod": "^4.0.17"
   }
 }

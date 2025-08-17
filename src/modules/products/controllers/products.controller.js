@@ -1,58 +1,64 @@
 const productsService = require("../services/products.service");
+const { success, fail } = require("../../../common/utils/response");
+const StatusCodes = require("../../../common/constants/statusCodes");
 
 class ProductsController {
   ping = (req, res) => {
-    res.send("Products endpoint is working!");
+    return success(
+      res,
+      { message: "Products endpoint is working!" },
+      StatusCodes.OK
+    );
   };
 
-  getAllProducts = async (req, res) => {
+  getAllProducts = async (req, res, next) => {
     try {
       const products = await productsService.getAllProducts();
-      res.json(products);
+      return success(res, products, StatusCodes.OK);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      next(err);
     }
   };
 
-  getProductById = async (req, res) => {
+  getProductById = async (req, res, next) => {
     try {
-      const product = await productsService.getProductById(req.params.id);
-      if (!product) return res.status(404).json({ error: "Not found" });
-      res.json(product);
+      const product = await productsService.getProductById(req.params.id); // id ถูก coerce แล้ว
+      if (!product) return fail(res, "Not found", StatusCodes.NOT_FOUND);
+      return success(res, product, StatusCodes.OK);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      next(err);
     }
   };
 
-  createProduct = async (req, res) => {
+  createProduct = async (req, res, next) => {
     try {
       const product = await productsService.createProduct(req.body);
-      res.status(201).json(product);
+      return success(res, product, StatusCodes.CREATED);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      next(err);
     }
   };
 
-  updateProduct = async (req, res) => {
+  updateProduct = async (req, res, next) => {
     try {
       const updated = await productsService.updateProduct(
         req.params.id,
         req.body
       );
-      if (!updated) return res.status(404).json({ error: "Not found" });
-      res.json(updated);
+      if (!updated) return fail(res, "Not found", StatusCodes.NOT_FOUND);
+      return success(res, updated, StatusCodes.OK);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      next(err);
     }
   };
 
-  deleteProduct = async (req, res) => {
+  deleteProduct = async (req, res, next) => {
     try {
       const deleted = await productsService.deleteProduct(req.params.id);
-      if (!deleted) return res.status(404).json({ error: "Not found" });
-      res.status(204).send();
+      if (!deleted) return fail(res, "Not found", StatusCodes.NOT_FOUND);
+      return success(res, null, StatusCodes.NO_CONTENT);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      next(err);
     }
   };
 }
